@@ -1,6 +1,6 @@
 {
   "name": "acpreact",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "module",
   "main": "index.js",
   "description": "ACP SDK for monitoring and reacting to chat conversations",
