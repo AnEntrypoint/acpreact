@@ -150,9 +150,23 @@ Analyze the text and call appropriate tools using the ACP protocol. Respond with
       let output = '';
       let errorOutput = '';
 
-      const child = spawn(cli, ['--stdin'], {
+      // Different CLIs have different invocation styles
+      let args;
+      let useStdin = false;
+      
+      if (cli === 'kilo') {
+        // kilo uses: kilo run <message>
+        args = ['run', prompt];
+      } else {
+        // opencode uses: opencode --stdin (with prompt via stdin)
+        args = ['--stdin'];
+        useStdin = true;
+      }
+
+      const child = spawn(cli, args, {
         stdio: ['pipe', 'pipe', 'pipe'],
-        cwd: process.cwd()
+        cwd: process.cwd(),
+        timeout: 30000 // 30 second timeout
       });
 
       child.stdout.on('data', (data) => {
@@ -198,8 +212,10 @@ Analyze the text and call appropriate tools using the ACP protocol. Respond with
         reject(new Error(`Failed to spawn ${cli}: ${error.message}`));
       });
 
-      child.stdin.write(prompt);
-      child.stdin.end();
+      if (useStdin) {
+        child.stdin.write(prompt);
+        child.stdin.end();
+      }
     });
   }
 
