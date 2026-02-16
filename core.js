@@ -1,6 +1,7 @@
 class ACPProtocol {
-  constructor() {
+  constructor(instruction) {
     this.messageId = 0;
+    this.instruction = instruction;
     this.toolWhitelist = new Set();
     this.toolCallLog = [];
     this.rejectedCallLog = [];
@@ -56,22 +57,28 @@ class ACPProtocol {
       whitelisted: true,
     }));
 
+    const result = {
+      protocolVersion: "1.0",
+      serverInfo: {
+        name: "acpreact ACP Server",
+        version: "1.0.0",
+      },
+      securityConfiguration: {
+        toolWhitelistEnabled: true,
+        allowedTools: Array.from(this.toolWhitelist),
+        rejectionBehavior: "strict",
+      },
+      agentCapabilities,
+    };
+
+    if (this.instruction) {
+      result.instruction = this.instruction;
+    }
+
     return {
       jsonrpc: "2.0",
       id: 0,
-      result: {
-        protocolVersion: "1.0",
-        serverInfo: {
-          name: "acpreact ACP Server",
-          version: "1.0.0",
-        },
-        securityConfiguration: {
-          toolWhitelistEnabled: true,
-          allowedTools: Array.from(this.toolWhitelist),
-          rejectionBehavior: "strict",
-        },
-        agentCapabilities,
-      },
+      result,
     };
   }
 

@@ -53,11 +53,52 @@ const result = await acp.callTool('weather', { location: 'San Francisco' });
 console.log(result);
 ```
 
+### Using System Instructions
+
+Pass a system instruction to the ACPProtocol constructor. The instruction will be included in the initialization response and communicated to opencode:
+
+```javascript
+import { ACPProtocol } from 'acpreact';
+
+const instruction = 'You are a helpful weather assistant. Always provide temperature in Fahrenheit.';
+const acp = new ACPProtocol(instruction);
+
+// Register tools as usual
+acp.registerTool(
+  'weather',
+  'Get weather information for a location',
+  {
+    type: 'object',
+    properties: {
+      location: { type: 'string', description: 'City name' }
+    },
+    required: ['location']
+  },
+  async (params) => {
+    return {
+      location: params.location,
+      temperature: 72,
+      condition: 'sunny'
+    };
+  }
+);
+
+// The instruction is included in the initialization response
+const response = acp.createInitializeResponse();
+console.log(response.result.instruction);
+// Output: "You are a helpful weather assistant. Always provide temperature in Fahrenheit."
+```
+
 ## API
 
 ### ACPProtocol
 
 Main class for setting up ACP protocol communication.
+
+**Constructor:**
+
+- `new ACPProtocol(instruction)`: Initialize the protocol
+  - `instruction` (optional): String - system instruction to communicate to opencode
 
 **Methods:**
 
@@ -82,6 +123,7 @@ Main class for setting up ACP protocol communication.
 
 **Properties:**
 
+- `instruction`: String (optional) - system instruction communicated to opencode
 - `toolWhitelist`: Set of registered tool names
 - `toolCallLog`: Array of executed tool calls with timestamps
 - `rejectedCallLog`: Array of rejected tool attempts
