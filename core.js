@@ -1,3 +1,10 @@
+import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 class ACPProtocol {
   constructor(instruction) {
     this.messageId = 0;
@@ -118,6 +125,103 @@ class ACPProtocol {
       return result;
     }
     throw new Error(`Unknown tool: ${toolName}`);
+  }
+
+  async process(text, options = {}) {
+    const cli = options.cli || 'opencode';
+    const instruction = options.instruction || this.instruction || '';
+    
+    const toolsDesc = Array.from(this.toolWhitelist).map(name => {
+      const tool = this.tools[name];
+      return `- ${name}: Tool available`;
+    }).join('\n');
+
+    const prompt = `${instruction}
+
+Available tools:
+${toolsDesc}
+
+Text to analyze:
+${text}
+
+Analyze the text and call appropriate tools using the ACP protocol. Respond with JSON-RPC tool calls.`;
+
+    return new Promise((resolve, reject) => {
+      let output = '';
+      let errorOutput = '';
+
+      const child = spawn(cli, ['--stdin'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: process.cwd()
+      });
+
+      child.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+
+      child.stderr.on('data', (data) => {
+        errorOutput += data.toString();
+      });
+
+      child.on('close', async (code) => {
+        if (code !== 0 && code !== null) {
+          reject(new Error(`CLI exited with code ${code}: ${errorOutput}`));
+          return;
+        }
+
+        try {
+          const toolCalls = this.parseToolCalls(output);
+          const results = [];
+          
+          for (const call of toolCalls) {
+            if (this.toolWhitelist.has(call.method)) {
+              const result = await this.callTool(call.method, call.params);
+              results.push({ tool: call.method, result });
+            }
+          }
+          
+          resolve({
+            text: output,
+            toolCalls: results,
+            logs: this.toolCallLog
+          });
+        } catch (e) {
+          resolve({
+            text: output,
+            error: e.message,
+            logs: this.toolCallLog
+          });
+        }
+      });
+
+      child.on('error', (error) => {
+        reject(new Error(`Failed to spawn ${cli}: ${error.message}`));
+      });
+
+      child.stdin.write(prompt);
+      child.stdin.end();
+    });
+  }
+
+  parseToolCalls(output) {
+    const calls = [];
+    const lines = output.split('\n');
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      
+      try {
+        const json = JSON.parse(trimmed);
+        if (json.jsonrpc === '2.0' && json.method && json.params) {
+          calls.push({ method: json.method, params: json.params });
+        }
+      } catch (e) {
+        // Not JSON, skip
+      }
+    }
+    
+    return calls;
   }
 }
 
