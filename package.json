@@ -1,0 +1,15 @@
+{
+  "name": "watcher",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "description": "ACP SDK for monitoring and reacting to chat conversations",
+  "keywords": ["acp", "protocol", "chat", "monitoring"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
+    "@opencode-ai/plugin": "^1.2.5",
+    "@opencode-ai/sdk": "^1.2.5"
+  }
+}
