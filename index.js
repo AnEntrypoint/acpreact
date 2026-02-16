@@ -6,7 +6,7 @@ export { ACPProtocol, createSimulativeRetriever, processChat };
  * ACP SDK Usage Examples
  *
  * Basic usage:
- *   import { ACPProtocol, createSimulativeRetriever, processChat } from 'watcher';
+ *   import { ACPProtocol, createSimulativeRetriever, processChat } from 'thready';
  *
  * Create and use ACP Protocol:
  *   const acp = new ACPProtocol();

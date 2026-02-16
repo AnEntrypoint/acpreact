@@ -1,4 +1,4 @@
-# Watcher - ACP SDK
+# Thready - ACP SDK
 
 A clean, production-ready SDK for implementing ACP (AI Control Protocol) with function-based chat analysis.
 
@@ -13,7 +13,7 @@ A clean, production-ready SDK for implementing ACP (AI Control Protocol) with fu
 ## Installation
 
 ```bash
-npm install watcher
+npm install thready
 ```
 
 ## Quick Start
@@ -21,7 +21,7 @@ npm install watcher
 ### Processing Chat Content
 
 ```javascript
-import { processChat } from 'watcher';
+import { processChat } from 'thready';
 
 const chatContent = "[14:23] alice: Where is Taj Mahal?\n[14:24] bob: Main Street";
 const result = await processChat(chatContent, {
@@ -33,7 +33,7 @@ console.log(result.answer);
 ### Using ACPProtocol
 
 ```javascript
-import { ACPProtocol } from 'watcher';
+import { ACPProtocol } from 'thready';
 
 const acp = new ACPProtocol();
 const response = acp.createInitializeResponse();
@@ -45,7 +45,7 @@ const result = await acp.callTool('simulative_retriever', {
 ### Creating Tool Definitions
 
 ```javascript
-import { createSimulativeRetriever } from 'watcher';
+import { createSimulativeRetriever } from 'thready';
 
 const tool = createSimulativeRetriever();
 // Use in your ACP setup
