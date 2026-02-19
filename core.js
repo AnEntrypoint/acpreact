@@ -12,23 +12,10 @@ class ACPProtocol extends EventEmitter {
     this.toolCallLog = [];
     this.rejectedCallLog = [];
     this.tools = {};
-    this.cliProcess = null;
-    this.pendingRequests = new Map();
-    this.buffer = '';
-    this.initialized = false;
-    this.sessionId = null;
   }
 
   generateRequestId() {
     return ++this.messageId;
-  }
-
-  createJsonRpcResponse(id, result) {
-    return { jsonrpc: "2.0", id, result };
-  }
-
-  createJsonRpcError(id, error) {
-    return { jsonrpc: "2.0", id, error: { code: -32603, message: error } };
   }
 
   registerTool(name, description, inputSchema, handler) {
@@ -51,14 +38,14 @@ class ACPProtocol extends EventEmitter {
     const tools = this.getToolsList();
     if (tools.length === 0) return '';
     
-    let prompt = '\n\nYou have access to the following tools. You MUST use these tools to respond:\n\n';
+    let prompt = '\n\nYou have access to the following tools. You MUST use these tools to interact:\n\n';
     for (const tool of tools) {
       prompt += `## Tool: ${tool.name}\n${tool.description}\n`;
       prompt += `Parameters: ${JSON.stringify(tool.inputSchema, null, 2)}\n`;
-      prompt += `To call this tool, output a JSON-RPC request like:\n`;
-      prompt += `{"jsonrpc":"2.0","id":<unique_id>,"method":"tools/${tool.name}","params":{<parameters>}}\n\n`;
+      prompt += `To call this tool, output a JSON-RPC request on a single line:\n`;
+      prompt += `{"jsonrpc":"2.0","id":<number>,"method":"tools/${tool.name}","params":{<parameters>}}\n\n`;
     }
-    prompt += 'IMPORTANT: Always respond by calling a tool with a JSON-RPC request. Do not just output text.\n';
+    prompt += 'IMPORTANT: When you need to use a tool, output ONLY the JSON-RPC request, nothing else.\n';
     return prompt;
   }
 
@@ -100,192 +87,143 @@ class ACPProtocol extends EventEmitter {
     throw new Error(`Unknown tool: ${toolName}`);
   }
 
-  async start(cli = 'kilo') {
-    if (this.cliProcess) return this.sessionId;
+  parseTextOutput(output) {
+    let text = '';
+    const lines = output.split('\n');
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      
+      try {
+        const json = JSON.parse(trimmed);
+        if (json.type === 'text' && json.part?.text) {
+          text += json.part.text;
+        }
+      } catch {}
+    }
+    
+    return text;
+  }
 
+  parseToolCalls(output) {
+    const calls = [];
+    
+    const textContent = this.parseTextOutput(output);
+    
+    for (const line of textContent.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      
+      try {
+        const json = JSON.parse(trimmed);
+        if (json.jsonrpc === '2.0' && json.method?.startsWith('tools/') && json.params) {
+          calls.push({ 
+            id: json.id,
+            method: json.method, 
+            params: json.params 
+          });
+        }
+      } catch {}
+    }
+    
+    const lines = output.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      
+      try {
+        const json = JSON.parse(trimmed);
+        if (json.jsonrpc === '2.0' && json.method?.startsWith('tools/') && json.params) {
+          calls.push({ 
+            id: json.id,
+            method: json.method, 
+            params: json.params 
+          });
+        }
+      } catch {}
+    }
+    
+    return calls;
+  }
+
+  async process(text, options = {}) {
+    const cli = options.cli || 'kilo';
+    const model = options.model || 'kilo/z-ai/glm-5:free';
+    
+    const fullPrompt = this.instruction 
+      ? `${this.instruction}${this.getToolsPrompt()}\n\n---\n\n${text}`
+      : `${this.getToolsPrompt()}\n\n---\n\n${text}`;
+
+    const escapedPrompt = fullPrompt.replace(/"/g, '\\"').replace(/\n/g, ' ');
+    
     return new Promise((resolve, reject) => {
-      this.cliProcess = spawn('script', ['-q', '-c', `${cli} acp`, '/dev/null'], {
+      let output = '';
+      let errorOutput = '';
+
+      const child = spawn('script', ['-q', '-c', 
+        `${cli} run --auto --model ${model} --format json "${escapedPrompt}"`, 
+        '/dev/null'
+      ], {
         stdio: ['pipe', 'pipe', 'pipe'],
         cwd: process.cwd(),
         env: { ...process.env, TERM: 'dumb' },
       });
 
-      this.cliProcess.stdout.on('data', (data) => {
-        this.buffer += data.toString();
-        this.processBuffer();
+      child.stdout.on('data', (data) => {
+        output += data.toString();
       });
 
-      this.cliProcess.stderr.on('data', (data) => {
-        this.emit('stderr', data.toString());
+      child.stderr.on('data', (data) => {
+        errorOutput += data.toString();
       });
 
-      this.cliProcess.on('error', (error) => {
-        this.emit('error', error);
-        reject(error);
+      child.on('close', async (code) => {
+        if (code !== 0 && code !== null && !output) {
+          reject(new Error(`CLI exited with code ${code}: ${errorOutput}`));
+          return;
+        }
+
+        try {
+          const toolCalls = this.parseToolCalls(output);
+          const results = [];
+          
+          for (const call of toolCalls) {
+            const toolName = call.method.replace('tools/', '');
+            if (this.toolWhitelist.has(toolName)) {
+              const result = await this.callTool(toolName, call.params);
+              results.push({ tool: toolName, result });
+            }
+          }
+          
+          resolve({
+            text: this.parseTextOutput(output),
+            rawOutput: output,
+            toolCalls: results,
+            logs: this.toolCallLog
+          });
+        } catch (e) {
+          resolve({
+            text: this.parseTextOutput(output),
+            rawOutput: output,
+            error: e.message,
+            logs: this.toolCallLog
+          });
+        }
       });
 
-      this.cliProcess.on('close', (code) => {
-        this.emit('close', code);
-        this.cliProcess = null;
-        this.initialized = false;
-        this.sessionId = null;
-      });
-
-      const timeout = setTimeout(() => {
-        reject(new Error('ACP initialization timeout'));
-      }, 30000);
-
-      this.once('ready', () => {
-        clearTimeout(timeout);
-        resolve(this.sessionId);
-      });
-
-      setTimeout(() => this.createSession(), 500);
-    });
-  }
-
-  processBuffer() {
-    const lines = this.buffer.split('\n');
-    this.buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      this.handleMessage(trimmed);
-    }
-  }
-
-  handleMessage(line) {
-    let msg;
-    try {
-      msg = JSON.parse(line);
-    } catch {
-      return;
-    }
-
-    if (msg.method === 'initialize') {
-      this.send(this.createInitializeResponse(msg.id));
-      this.initialized = true;
-    } else if (msg.id !== undefined && msg.result !== undefined) {
-      const resolver = this.pendingRequests.get(msg.id);
-      if (resolver) {
-        this.pendingRequests.delete(msg.id);
-        resolver(msg.result);
-      }
-      if (msg.id === 1 && msg.result?.sessionId) {
-        this.sessionId = msg.result.sessionId;
-        this.emit('ready');
-      }
-    } else if (msg.id !== undefined && msg.error !== undefined) {
-      const resolver = this.pendingRequests.get(msg.id);
-      if (resolver) {
-        this.pendingRequests.delete(msg.id);
-        resolver({ error: msg.error });
-      }
-    } else if (msg.method?.startsWith('tools/')) {
-      const toolName = msg.method.replace('tools/', '');
-      this.handleToolCall(msg.id, toolName, msg.params);
-    } else if (msg.method === 'session/update') {
-      this.emit('update', msg.params);
-    }
-  }
-
-  async handleToolCall(id, toolName, params) {
-    try {
-      const result = await this.callTool(toolName, params);
-      this.send(this.createJsonRpcResponse(id, result));
-    } catch (e) {
-      this.send(this.createJsonRpcError(id, e.message));
-    }
-  }
-
-  send(msg) {
-    if (this.cliProcess && this.cliProcess.stdin.writable) {
-      this.cliProcess.stdin.write(JSON.stringify(msg) + '\n');
-    }
-  }
-
-  createInitializeResponse(id) {
-    return {
-      jsonrpc: "2.0",
-      id,
-      result: {
-        protocolVersion: 1,
-        capabilities: { tools: this.getToolsList() },
-        serverInfo: { name: 'acpreact', version: '1.0.0' },
-        instruction: this.instruction,
-      }
-    };
-  }
-
-  createSession() {
-    this.send({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "session/new",
-      params: {
-        cwd: process.cwd(),
-        mcpServers: [],
-      },
-    });
-  }
-
-  async sendPrompt(content) {
-    if (!this.sessionId) {
-      throw new Error('No session. Call start() first.');
-    }
-
-    const reqId = this.generateRequestId();
-    const fullPrompt = this.instruction 
-      ? `${this.instruction}${this.getToolsPrompt()}\n\n---\n\n${content}`
-      : `${this.getToolsPrompt()}\n\n---\n\n${content}`;
-
-    return new Promise((resolve) => {
-      this.pendingRequests.set(reqId, resolve);
-      this.send({
-        jsonrpc: "2.0",
-        id: reqId,
-        method: "session/prompt",
-        params: {
-          sessionId: this.sessionId,
-          prompt: [{ type: "text", text: fullPrompt }],
-        },
+      child.on('error', (error) => {
+        reject(new Error(`Failed to spawn ${cli}: ${error.message}`));
       });
 
       setTimeout(() => {
-        if (this.pendingRequests.has(reqId)) {
-          this.pendingRequests.delete(reqId);
-          resolve({ timeout: true });
-        }
+        child.kill();
+        reject(new Error('Timeout'));
       }, 120000);
     });
   }
 
-  async process(text, options = {}) {
-    const cli = options.cli || 'kilo';
-
-    if (!this.cliProcess) {
-      await this.start(cli);
-    }
-
-    const result = await this.sendPrompt(text);
-
-    return {
-      text,
-      result,
-      toolCalls: this.toolCallLog.slice(-10),
-      logs: this.toolCallLog,
-    };
-  }
-
-  stop() {
-    if (this.cliProcess) {
-      this.cliProcess.kill();
-      this.cliProcess = null;
-    }
-    this.initialized = false;
-    this.sessionId = null;
-  }
+  stop() {}
 }
 
 export { ACPProtocol };
