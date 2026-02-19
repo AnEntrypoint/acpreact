@@ -23,10 +23,6 @@ class ACPProtocol extends EventEmitter {
     return ++this.messageId;
   }
 
-  createJsonRpcRequest(method, params) {
-    return { jsonrpc: "2.0", id: this.generateRequestId(), method, params };
-  }
-
   createJsonRpcResponse(id, result) {
     return { jsonrpc: "2.0", id, result };
   }
@@ -49,6 +45,21 @@ class ACPProtocol extends EventEmitter {
       description: this.toolDescriptions[toolName],
       inputSchema: this.toolSchemas[toolName],
     }));
+  }
+
+  getToolsPrompt() {
+    const tools = this.getToolsList();
+    if (tools.length === 0) return '';
+    
+    let prompt = '\n\nYou have access to the following tools. You MUST use these tools to respond:\n\n';
+    for (const tool of tools) {
+      prompt += `## Tool: ${tool.name}\n${tool.description}\n`;
+      prompt += `Parameters: ${JSON.stringify(tool.inputSchema, null, 2)}\n`;
+      prompt += `To call this tool, output a JSON-RPC request like:\n`;
+      prompt += `{"jsonrpc":"2.0","id":<unique_id>,"method":"tools/${tool.name}","params":{<parameters>}}\n\n`;
+    }
+    prompt += 'IMPORTANT: Always respond by calling a tool with a JSON-RPC request. Do not just output text.\n';
+    return prompt;
   }
 
   validateToolCall(toolName) {
@@ -195,17 +206,16 @@ class ACPProtocol extends EventEmitter {
   }
 
   createInitializeResponse(id) {
-    const result = {
-      protocolVersion: 1,
-      capabilities: { tools: this.getToolsList() },
-      serverInfo: { name: 'acpreact', version: '1.0.0' },
+    return {
+      jsonrpc: "2.0",
+      id,
+      result: {
+        protocolVersion: 1,
+        capabilities: { tools: this.getToolsList() },
+        serverInfo: { name: 'acpreact', version: '1.0.0' },
+        instruction: this.instruction,
+      }
     };
-
-    if (this.instruction) {
-      result.instruction = this.instruction;
-    }
-
-    return { jsonrpc: "2.0", id, result };
   }
 
   createSession() {
@@ -220,24 +230,15 @@ class ACPProtocol extends EventEmitter {
     });
   }
 
-  getToolsDescription() {
-    const tools = this.getToolsList();
-    if (tools.length === 0) return '';
-    
-    return '\n\nAvailable tools:\n' + tools.map(t => 
-      `- ${t.name}: ${t.description}\n  Parameters: ${JSON.stringify(t.inputSchema)}`
-    ).join('\n');
-  }
-
   async sendPrompt(content) {
     if (!this.sessionId) {
       throw new Error('No session. Call start() first.');
     }
 
     const reqId = this.generateRequestId();
-    const promptWithTools = this.instruction 
-      ? `${this.instruction}${this.getToolsDescription()}\n\nUser message: ${content}`
-      : content;
+    const fullPrompt = this.instruction 
+      ? `${this.instruction}${this.getToolsPrompt()}\n\n---\n\n${content}`
+      : `${this.getToolsPrompt()}\n\n---\n\n${content}`;
 
     return new Promise((resolve) => {
       this.pendingRequests.set(reqId, resolve);
@@ -247,7 +248,7 @@ class ACPProtocol extends EventEmitter {
         method: "session/prompt",
         params: {
           sessionId: this.sessionId,
-          prompt: [{ type: "text", text: promptWithTools }],
+          prompt: [{ type: "text", text: fullPrompt }],
         },
       });
 
