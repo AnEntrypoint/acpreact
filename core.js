@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { EventEmitter } from 'events';
 
 class ACPProtocol extends EventEmitter {
@@ -147,10 +147,25 @@ class ACPProtocol extends EventEmitter {
     return calls;
   }
 
+  async ensureKiloInstalled() {
+    try {
+      execSync('which kilo', { stdio: 'pipe' });
+      return;
+    } catch {}
+
+    try {
+      execSync('npm install -g @kilocode/cli', { stdio: 'pipe' });
+    } catch (error) {
+      throw new Error(`Failed to install @kilocode/cli: ${error.message}`);
+    }
+  }
+
   async process(text, options = {}) {
+    await this.ensureKiloInstalled();
+
     const cli = options.cli || 'kilo';
     const model = options.model || 'kilo/z-ai/glm-5:free';
-    
+
     const fullPrompt = this.instruction 
       ? `${this.instruction}${this.getToolsPrompt()}\n\n---\n\n${text}`
       : `${this.getToolsPrompt()}\n\n---\n\n${text}`;
