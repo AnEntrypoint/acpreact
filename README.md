@@ -1,14 +1,24 @@
 # acpreact - ACP SDK
 
-A lightweight SDK for setting up tools and managing ACP protocol communication. Allows opencode and kilo CLI to call registered tools via the ACP protocol.
+A lightweight SDK for registering tools and running them via kilo CLI or opencode. Allows kilo and opencode to call registered tools via a custom JSON-RPC 2.0 protocol injected into the prompt.
 
 ## Features
 
 - **ACPProtocol**: Core ACP protocol implementation with JSON-RPC 2.0 support
 - **Tool Registration**: Register custom tools with descriptions and input schemas
 - **Tool Whitelist**: Built-in security model for controlling tool access
-- **Tool Execution**: Execute whitelisted tools with validation
+- **Tool Execution**: Execute whitelisted tools with validation and logging
+- **CLI Integration**: Works with kilo CLI and opencode via `process()` method
 - **ES Module**: Pure ES modules, no build step required
+
+## Prerequisites
+
+Install kilo CLI and/or opencode before using `process()`:
+
+```bash
+npm install -g @kilocode/cli    # for kilo
+npm install -g opencode-ai      # for opencode
+```
 
 ## Installation
 
@@ -18,52 +28,46 @@ npm install acpreact
 
 ## Quick Start
 
-### Creating an ACP Server with Custom Tools
+### Register Tools and Process with kilo CLI
 
 ```javascript
 import { ACPProtocol } from 'acpreact';
 
-const acp = new ACPProtocol();
+const acp = new ACPProtocol('You are a calculator assistant. Use the add tool when asked to add numbers.');
 
-// Register a custom tool
 acp.registerTool(
-  'weather',
-  'Get weather information for a location',
+  'add',
+  'Add two numbers together',
   {
     type: 'object',
     properties: {
-      location: { type: 'string', description: 'City name' }
+      a: { type: 'number', description: 'First number' },
+      b: { type: 'number', description: 'Second number' }
     },
-    required: ['location']
+    required: ['a', 'b']
   },
-  async (params) => {
-    return {
-      location: params.location,
-      temperature: 72,
-      condition: 'sunny'
-    };
-  }
+  async (params) => ({ sum: params.a + params.b })
 );
 
-// Initialize protocol response
-const response = acp.createInitializeResponse();
+const result = await acp.process('What is 15 + 27? Use the add tool.', { cli: 'kilo' });
+console.log(result.text);          // human-readable text response
+console.log(result.toolCalls);     // [{ tool: 'add', result: { sum: 42 } }]
+console.log(result.logs);          // tool call audit log
+```
 
-// Execute tool
-const result = await acp.callTool('weather', { location: 'San Francisco' });
-console.log(result);
+### Using opencode
+
+```javascript
+const result = await acp.process('What is 15 + 27? Use the add tool.', { cli: 'opencode' });
 ```
 
 ### Using System Instructions
 
-Pass a system instruction to the ACPProtocol constructor. The instruction will be included in the initialization response and communicated to opencode or kilo CLI:
-
 ```javascript
 import { ACPProtocol } from 'acpreact';
 
-const instruction = 'You are a helpful weather assistant. Always provide temperature in Fahrenheit.';
-const acp = new ACPProtocol(instruction);
+const acp = new ACPProtocol('You are a helpful weather assistant. Always provide temperature in Fahrenheit.');
 
-// Register tools as usual
 acp.registerTool(
   'weather',
   'Get weather information for a location',
@@ -74,85 +78,96 @@ acp.registerTool(
     },
     required: ['location']
   },
-  async (params) => {
-    return {
-      location: params.location,
-      temperature: 72,
-      condition: 'sunny'
-    };
-  }
+  async (params) => ({
+    location: params.location,
+    temperature: 72,
+    condition: 'sunny'
+  })
 );
 
-// The instruction is included in the initialization response
-const response = acp.createInitializeResponse();
-console.log(response.result.instruction);
-// Output: "You are a helpful weather assistant. Always provide temperature in Fahrenheit."
+const result = await acp.process('What is the weather in San Francisco?', { cli: 'kilo' });
+console.log(result.text);       // text response (tool call JSON filtered out)
+console.log(result.toolCalls);  // [{ tool: 'weather', result: { location: 'San Francisco', ... } }]
 ```
 
 ## API
 
 ### ACPProtocol
 
-Main class for setting up ACP protocol communication.
+Main class for ACP protocol communication.
 
 **Constructor:**
 
-- `new ACPProtocol(instruction)`: Initialize the protocol
-  - `instruction` (optional): String - system instruction to communicate to opencode or kilo CLI
+- `new ACPProtocol(instruction?)`: Initialize the protocol
+  - `instruction` (optional): String - system instruction prepended to every prompt sent to the CLI
 
 **Methods:**
 
 - `registerTool(name, description, inputSchema, handler)`: Register a custom tool
   - `name`: String - tool identifier
-  - `description`: String - tool description
+  - `description`: String - tool description shown to the model
   - `inputSchema`: Object - JSON Schema for tool inputs
   - `handler`: Async function - receives params object, returns result
   - Returns: Tool definition object
 
-- `createInitializeResponse()`: Generate protocol initialization response
+- `async process(text, options?)`: Send a prompt to kilo or opencode and execute any tool calls
+  - `text`: String - the user prompt
+  - `options.cli`: `'kilo'` (default) or `'opencode'`
+  - `options.model`: String - model in `provider/model` format (uses CLI default if omitted)
+  - Returns: `{ text, rawOutput, toolCalls, logs }` or `{ text, rawOutput, error, logs }` on parse failure
 
-- `createJsonRpcRequest(method, params)`: Create JSON-RPC request object
+- `createInitializeResponse()`: Generate ACP protocol initialization response with registered tools
 
-- `createJsonRpcResponse(id, result)`: Create JSON-RPC response object
+- `createJsonRpcRequest(method, params)`: Create JSON-RPC 2.0 request object
 
-- `createJsonRpcError(id, error)`: Create JSON-RPC error object
+- `createJsonRpcResponse(id, result)`: Create JSON-RPC 2.0 response object
 
-- `validateToolCall(toolName)`: Check if tool is whitelisted
+- `createJsonRpcError(id, error)`: Create JSON-RPC 2.0 error object (accepts Error or string)
 
-- `async callTool(toolName, params)`: Execute a registered tool
+- `validateToolCall(toolName)`: Check if tool is whitelisted, returns `{ allowed, error? }`
+
+- `async callTool(toolName, params)`: Execute a registered tool directly
+
+- `parseTextOutput(output)`: Parse human-readable text from CLI JSON output (filters tool call JSON)
+
+- `parseToolCalls(output)`: Parse JSON-RPC tool calls from CLI output, deduplicated by id+method
 
 **Properties:**
 
-- `instruction`: String (optional) - system instruction communicated to opencode or kilo CLI
+- `instruction`: String (optional) - system instruction prepended to prompts
 - `toolWhitelist`: Set of registered tool names
-- `toolCallLog`: Array of executed tool calls with timestamps
-- `rejectedCallLog`: Array of rejected tool attempts
+- `toolCallLog`: Array of executed tool calls with timestamps and results
+- `rejectedCallLog`: Array of rejected tool attempts with reasons
+
+## How It Works
+
+`process()` injects the registered tool list and JSON-RPC call format into the prompt, invokes the CLI, and parses any JSON-RPC tool calls from the output. Matched tool calls are executed locally and their results returned.
+
+The model outputs tool calls as JSON-RPC lines:
+```
+{"jsonrpc":"2.0","id":1,"method":"tools/add","params":{"a":15,"b":27}}
+```
+
+These are parsed, executed, and returned in `result.toolCalls`. The `text` field contains only human-readable model output with tool call JSON filtered out.
 
 ## Example: Multiple Tools
 
 ```javascript
 import { ACPProtocol } from 'acpreact';
 
-const acp = new ACPProtocol();
+const acp = new ACPProtocol('You are a data assistant.');
 
-// Register database tool
 acp.registerTool(
   'query_database',
   'Query the application database',
   {
     type: 'object',
-    properties: {
-      query: { type: 'string' }
-    },
+    properties: { query: { type: 'string' } },
     required: ['query']
   },
-  async (params) => {
-    // Your database logic here
-    return { data: [] };
-  }
+  async (params) => ({ data: [] })
 );
 
-// Register API tool
 acp.registerTool(
   'call_api',
   'Call an external API',
@@ -164,15 +179,12 @@ acp.registerTool(
     },
     required: ['endpoint', 'method']
   },
-  async (params) => {
-    // Your API logic here
-    return { response: {} };
-  }
+  async (params) => ({ response: {} })
 );
 
-// Initialize and use
 const initResponse = acp.createInitializeResponse();
-console.log(initResponse.result.agentCapabilities);
+console.log(initResponse.result.tools.length); // 2
+console.log(initResponse.result.agentCapabilities); // { toolCalling: true, streaming: false }
 ```
 
 ## License
