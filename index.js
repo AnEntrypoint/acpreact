@@ -1,8 +1,8 @@
 import { ACPProtocol } from './core.js';
-import { ServiceRegistry, createServiceStack } from './services.js';
+import { ServiceRegistry, isRateLimited, createServiceStack } from './services.js';
 import { FallbackEngine } from './fallback.js';
 
-export { ACPProtocol, ServiceRegistry, FallbackEngine, createServiceStack };
+export { ACPProtocol, ServiceRegistry, FallbackEngine, isRateLimited, createServiceStack };
 
 /*
  * acpreact - ACP SDK for registering tools with multi-service fallback
