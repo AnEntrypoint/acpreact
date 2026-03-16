@@ -1,6 +1,6 @@
 # acpreact - ACP SDK
 
-A lightweight SDK for registering tools and running them via kilo CLI or opencode. Allows kilo and opencode to call registered tools via a custom JSON-RPC 2.0 protocol injected into the prompt.
+A lightweight SDK for registering tools and running them via kilo CLI, opencode, or gemini. Supports multi-service fallback with automatic rate-limit detection, per-provider cooldowns, and transparent failover across a service stack.
 
 ## Features
 
@@ -8,7 +8,9 @@ A lightweight SDK for registering tools and running them via kilo CLI or opencod
 - **Tool Registration**: Register custom tools with descriptions and input schemas
 - **Tool Whitelist**: Built-in security model for controlling tool access
 - **Tool Execution**: Execute whitelisted tools with validation and logging
-- **CLI Integration**: Works with kilo CLI and opencode via `process()` method
+- **CLI Integration**: Works with kilo CLI, opencode, and gemini via `process()` method
+- **Multi-Service Fallback**: Automatically falls back through a service stack on rate limits
+- **Rate-Limit Detection**: Detects 429, quota errors, and RESOURCE_EXHAUSTED per provider
 - **ES Module**: Pure ES modules, no build step required
 
 ## Prerequisites
@@ -61,6 +63,76 @@ console.log(result.logs);          // tool call audit log
 const result = await acp.process('What is 15 + 27? Use the add tool.', { cli: 'opencode' });
 ```
 
+### Multi-Service Fallback
+
+Pass a `services` array to the constructor to enable automatic fallback across providers. On rate limits, the engine marks the current service unavailable and continues to the next:
+
+```javascript
+import { ACPProtocol } from 'acpreact';
+
+const acp = new ACPProtocol('You are a calculator.', [
+  { cli: 'kilo' },
+  { cli: 'opencode' },
+  { cli: 'gemini' },
+]);
+
+acp.registerTool('add', 'Add two numbers', { type: 'object', properties: { a: { type: 'number' }, b: { type: 'number' } }, required: ['a', 'b'] }, async ({ a, b }) => ({ sum: a + b }));
+
+const result = await acp.process('What is 15 + 27? Use the add tool.');
+```
+
+Override services per call:
+
+```javascript
+const result = await acp.process('prompt', {
+  services: [{ cli: 'opencode' }, { cli: 'kilo' }],
+});
+```
+
+Multiple profiles per provider (useful for separate API key accounts):
+
+```javascript
+const acp = new ACPProtocol('instruction', [
+  { cli: 'kilo', profile: 'account-a' },
+  { cli: 'kilo', profile: 'account-b' },
+  { cli: 'opencode' },
+]);
+```
+
+### createServiceStack
+
+Build a typed service stack for use with `FallbackEngine` directly:
+
+```javascript
+import { createServiceStack, FallbackEngine } from 'acpreact';
+
+const stack = createServiceStack([
+  { cli: 'kilo', profile: 'work' },
+  { cli: 'opencode' },
+  { cli: 'gemini' },
+]);
+
+const engine = new FallbackEngine(stack);
+```
+
+### Fallback Events
+
+`ACPProtocol` (and `FallbackEngine`) emit events during fallback:
+
+```javascript
+acp.on('rate-limited', ({ name, profileId, cooldownMs }) => {
+  console.log(`${name}(${profileId}) rate-limited for ${cooldownMs}ms`);
+});
+
+acp.on('fallback', ({ from, to }) => {
+  console.log(`Falling back from ${from.name} to ${to.name}`);
+});
+
+acp.on('success', ({ name, profileId, attempted }) => {
+  console.log(`Succeeded on ${name}(${profileId}) after ${attempted} attempt(s)`);
+});
+```
+
 ### Using System Instructions
 
 ```javascript
@@ -98,8 +170,9 @@ Main class for ACP protocol communication.
 
 **Constructor:**
 
-- `new ACPProtocol(instruction?)`: Initialize the protocol
+- `new ACPProtocol(instruction?, services?)`: Initialize the protocol
   - `instruction` (optional): String - system instruction prepended to every prompt sent to the CLI
+  - `services` (optional): Array of `{ cli, profile?, model? }` - instance-level default service stack for multi-service fallback
 
 **Methods:**
 
@@ -110,11 +183,14 @@ Main class for ACP protocol communication.
   - `handler`: Async function - receives params object, returns result
   - Returns: Tool definition object
 
-- `async process(text, options?)`: Send a prompt to kilo or opencode and execute any tool calls
+- `async process(text, options?)`: Send a prompt to a CLI and execute any tool calls
   - `text`: String - the user prompt
-  - `options.cli`: `'kilo'` (default) or `'opencode'`
+  - `options.cli`: `'kilo'` (default), `'opencode'`, or `'gemini'` — used when `options.services` not set
+  - `options.services`: Array of `{ cli, profile?, model? }` — enables multi-service fallback for this call; takes precedence over `options.cli`
   - `options.model`: String - model in `provider/model` format (uses CLI default if omitted)
+  - `options.timeout`: Number - per-attempt timeout in ms (default 120000)
   - Returns: `{ text, rawOutput, toolCalls, logs }` or `{ text, rawOutput, error, logs }` on parse failure
+  - Throws `AggregateError` when all services in the stack are exhausted
 
 - `createInitializeResponse()`: Generate ACP protocol initialization response with registered tools
 
