@@ -1,26 +1,14 @@
-# acpreact - ACP SDK
+# acpreact
 
-A lightweight SDK for registering tools and running them via kilo CLI, opencode, or gemini. Supports multi-service fallback with automatic rate-limit detection, per-provider cooldowns, and transparent failover across a service stack.
+Multi-agent ACP SDK with chat platform adapters and a zero-dependency TUI.
 
 ## Features
 
-- **ACPProtocol**: Core ACP protocol implementation with JSON-RPC 2.0 support
-- **Tool Registration**: Register custom tools with descriptions and input schemas
-- **Tool Whitelist**: Built-in security model for controlling tool access
-- **Tool Execution**: Execute whitelisted tools with validation and logging
-- **CLI Integration**: Works with kilo CLI, opencode, and gemini via `process()` method
-- **Multi-Service Fallback**: Automatically falls back through a service stack on rate limits
-- **Rate-Limit Detection**: Detects 429, quota errors, and RESOURCE_EXHAUSTED per provider
-- **ES Module**: Pure ES modules, no build step required
-
-## Prerequisites
-
-Install kilo CLI and/or opencode before using `process()`:
-
-```bash
-npm install -g @kilocode/cli    # for kilo
-npm install -g opencode-ai      # for opencode
-```
+- **8 CLI agents**: claude (default), kilo, opencode, gemini, aider, codex, goose, amp
+- **4 chat adapters**: Discord, Telegram, Slack, Webhook
+- **Rate-limit fallback**: automatic failover across a service stack
+- **TUI**: zero-dep terminal dashboard via `--gui`
+- **CLI**: `acpreact --gui` to launch interactively
 
 ## Installation
 
@@ -28,240 +16,131 @@ npm install -g opencode-ai      # for opencode
 npm install acpreact
 ```
 
-## Quick Start
+## CLI Usage
 
-### Register Tools and Process with kilo CLI
-
-```javascript
-import { ACPProtocol } from 'acpreact';
-
-const acp = new ACPProtocol('You are a calculator assistant. Use the add tool when asked to add numbers.');
-
-acp.registerTool(
-  'add',
-  'Add two numbers together',
-  {
-    type: 'object',
-    properties: {
-      a: { type: 'number', description: 'First number' },
-      b: { type: 'number', description: 'Second number' }
-    },
-    required: ['a', 'b']
-  },
-  async (params) => ({ sum: params.a + params.b })
-);
-
-const result = await acp.process('What is 15 + 27? Use the add tool.', { cli: 'kilo' });
-console.log(result.text);          // human-readable text response
-console.log(result.toolCalls);     // [{ tool: 'add', result: { sum: 42 } }]
-console.log(result.logs);          // tool call audit log
+```bash
+acpreact "What is 15 + 27?"                         # run prompt via claude (default)
+acpreact --agent kilo "refactor this"               # use a specific agent
+acpreact --gui                                       # launch TUI
+acpreact --gui --adapter discord                     # TUI + Discord adapter
+acpreact --gui --adapter telegram                    # TUI + Telegram adapter
+acpreact --gui --adapter slack --port 3000           # TUI + Slack Events API
+acpreact --gui --adapter webhook --port 3000         # TUI + generic webhook
+acpreact --list                                      # list agents and adapters
 ```
 
-### Using opencode
+Environment variables:
 
-```javascript
-const result = await acp.process('What is 15 + 27? Use the add tool.', { cli: 'opencode' });
-```
-
-### Multi-Service Fallback
-
-Pass a `services` array to the constructor to enable automatic fallback across providers. On rate limits, the engine marks the current service unavailable and continues to the next:
-
-```javascript
-import { ACPProtocol } from 'acpreact';
-
-const acp = new ACPProtocol('You are a calculator.', [
-  { cli: 'kilo' },
-  { cli: 'opencode' },
-  { cli: 'gemini' },
-]);
-
-acp.registerTool('add', 'Add two numbers', { type: 'object', properties: { a: { type: 'number' }, b: { type: 'number' } }, required: ['a', 'b'] }, async ({ a, b }) => ({ sum: a + b }));
-
-const result = await acp.process('What is 15 + 27? Use the add tool.');
-```
-
-Override services per call:
-
-```javascript
-const result = await acp.process('prompt', {
-  services: [{ cli: 'opencode' }, { cli: 'kilo' }],
-});
-```
-
-Multiple profiles per provider (useful for separate API key accounts):
-
-```javascript
-const acp = new ACPProtocol('instruction', [
-  { cli: 'kilo', profile: 'account-a' },
-  { cli: 'kilo', profile: 'account-b' },
-  { cli: 'opencode' },
-]);
-```
-
-### createServiceStack
-
-Build a typed service stack for use with `FallbackEngine` directly:
-
-```javascript
-import { createServiceStack, FallbackEngine } from 'acpreact';
-
-const stack = createServiceStack([
-  { cli: 'kilo', profile: 'work' },
-  { cli: 'opencode' },
-  { cli: 'gemini' },
-]);
-
-const engine = new FallbackEngine(stack);
-```
-
-### Fallback Events
-
-`ACPProtocol` (and `FallbackEngine`) emit events during fallback:
-
-```javascript
-acp.on('rate-limited', ({ name, profileId, cooldownMs }) => {
-  console.log(`${name}(${profileId}) rate-limited for ${cooldownMs}ms`);
-});
-
-acp.on('fallback', ({ from, to }) => {
-  console.log(`Falling back from ${from.name} to ${to.name}`);
-});
-
-acp.on('success', ({ name, profileId, attempted }) => {
-  console.log(`Succeeded on ${name}(${profileId}) after ${attempted} attempt(s)`);
-});
-```
-
-### Using System Instructions
-
-```javascript
-import { ACPProtocol } from 'acpreact';
-
-const acp = new ACPProtocol('You are a helpful weather assistant. Always provide temperature in Fahrenheit.');
-
-acp.registerTool(
-  'weather',
-  'Get weather information for a location',
-  {
-    type: 'object',
-    properties: {
-      location: { type: 'string', description: 'City name' }
-    },
-    required: ['location']
-  },
-  async (params) => ({
-    location: params.location,
-    temperature: 72,
-    condition: 'sunny'
-  })
-);
-
-const result = await acp.process('What is the weather in San Francisco?', { cli: 'kilo' });
-console.log(result.text);       // text response (tool call JSON filtered out)
-console.log(result.toolCalls);  // [{ tool: 'weather', result: { location: 'San Francisco', ... } }]
-```
+| Var | Purpose |
+|---|---|
+| `ACPREACT_AGENT` | Default agent (overrides claude) |
+| `DISCORD_BOT_TOKEN` | Discord adapter |
+| `TELEGRAM_BOT_TOKEN` | Telegram adapter |
+| `SLACK_BOT_TOKEN` | Slack adapter |
 
 ## API
 
 ### ACPProtocol
 
-Main class for ACP protocol communication.
-
-**Constructor:**
-
-- `new ACPProtocol(instruction?, services?)`: Initialize the protocol
-  - `instruction` (optional): String - system instruction prepended to every prompt sent to the CLI
-  - `services` (optional): Array of `{ cli, profile?, model? }` - instance-level default service stack for multi-service fallback
-
-**Methods:**
-
-- `registerTool(name, description, inputSchema, handler)`: Register a custom tool
-  - `name`: String - tool identifier
-  - `description`: String - tool description shown to the model
-  - `inputSchema`: Object - JSON Schema for tool inputs
-  - `handler`: Async function - receives params object, returns result
-  - Returns: Tool definition object
-
-- `async process(text, options?)`: Send a prompt to a CLI and execute any tool calls
-  - `text`: String - the user prompt
-  - `options.cli`: `'kilo'` (default), `'opencode'`, or `'gemini'` — used when `options.services` not set
-  - `options.services`: Array of `{ cli, profile?, model? }` — enables multi-service fallback for this call; takes precedence over `options.cli`
-  - `options.model`: String - model in `provider/model` format (uses CLI default if omitted)
-  - `options.timeout`: Number - per-attempt timeout in ms (default 120000)
-  - Returns: `{ text, rawOutput, toolCalls, logs }` or `{ text, rawOutput, error, logs }` on parse failure
-  - Throws `AggregateError` when all services in the stack are exhausted
-
-- `createInitializeResponse()`: Generate ACP protocol initialization response with registered tools
-
-- `createJsonRpcRequest(method, params)`: Create JSON-RPC 2.0 request object
-
-- `createJsonRpcResponse(id, result)`: Create JSON-RPC 2.0 response object
-
-- `createJsonRpcError(id, error)`: Create JSON-RPC 2.0 error object (accepts Error or string)
-
-- `validateToolCall(toolName)`: Check if tool is whitelisted, returns `{ allowed, error? }`
-
-- `async callTool(toolName, params)`: Execute a registered tool directly
-
-- `parseTextOutput(output)`: Parse human-readable text from CLI JSON output (filters tool call JSON)
-
-- `parseToolCalls(output)`: Parse JSON-RPC tool calls from CLI output, deduplicated by id+method
-
-**Properties:**
-
-- `instruction`: String (optional) - system instruction prepended to prompts
-- `toolWhitelist`: Set of registered tool names
-- `toolCallLog`: Array of executed tool calls with timestamps and results
-- `rejectedCallLog`: Array of rejected tool attempts with reasons
-
-## How It Works
-
-`process()` injects the registered tool list and JSON-RPC call format into the prompt, invokes the CLI, and parses any JSON-RPC tool calls from the output. Matched tool calls are executed locally and their results returned.
-
-The model outputs tool calls as JSON-RPC lines:
-```
-{"jsonrpc":"2.0","id":1,"method":"tools/add","params":{"a":15,"b":27}}
-```
-
-These are parsed, executed, and returned in `result.toolCalls`. The `text` field contains only human-readable model output with tool call JSON filtered out.
-
-## Example: Multiple Tools
-
 ```javascript
 import { ACPProtocol } from 'acpreact';
 
-const acp = new ACPProtocol('You are a data assistant.');
+const acp = new ACPProtocol('You are a helpful assistant.', [
+  { cli: 'claude' },
+  { cli: 'kilo' },
+  { cli: 'opencode' },
+]);
 
-acp.registerTool(
-  'query_database',
-  'Query the application database',
-  {
-    type: 'object',
-    properties: { query: { type: 'string' } },
-    required: ['query']
-  },
-  async (params) => ({ data: [] })
-);
+acp.registerTool('reply', 'Send a reply', {
+  type: 'object',
+  properties: { message: { type: 'string' } },
+  required: ['message']
+}, async (params) => ({ sent: params.message }));
 
-acp.registerTool(
-  'call_api',
-  'Call an external API',
-  {
-    type: 'object',
-    properties: {
-      endpoint: { type: 'string' },
-      method: { type: 'string', enum: ['GET', 'POST'] }
-    },
-    required: ['endpoint', 'method']
-  },
-  async (params) => ({ response: {} })
-);
-
-const initResponse = acp.createInitializeResponse();
-console.log(initResponse.result.tools.length); // 2
-console.log(initResponse.result.agentCapabilities); // { toolCalling: true, streaming: false }
+const result = await acp.process('Hello!');
+console.log(result.text);       // human-readable response
+console.log(result.toolCalls);  // executed tool calls
 ```
+
+**Constructor**: `new ACPProtocol(instruction?, services?)`
+- `instruction`: system prompt prepended to every call
+- `services`: `[{ cli, profile?, model? }]` — fallback stack
+
+**process(text, options?)** — run a prompt
+- `options.cli`: agent name (overrides constructor stack)
+- `options.services`: per-call fallback stack
+- `options.model`: model name
+- `options.timeout`: ms (default 120000)
+- Returns `{ text, rawOutput, toolCalls, logs }`
+- Throws `AggregateError` when all services exhausted
+
+**Fallback events**: `rate-limited`, `fallback`, `success`
+
+### Adapters
+
+```javascript
+import { createAdapter } from 'acpreact';
+
+const adapter = await createAdapter('discord', { token: process.env.DISCORD_BOT_TOKEN });
+adapter.onMessage(async (msg) => {
+  const result = await acp.process(msg.content);
+  await adapter.send(msg.channelId, result.text);
+});
+await adapter.start();
+```
+
+Adapter types: `discord` · `telegram` · `slack` · `webhook`
+
+Each adapter: `{ start(), stop(), send(channelId, text), onMessage(fn) }`
+
+Telegram and Slack require no library — pure `fetch` long-polling / HTTP.
+
+### GUI (TUI)
+
+```javascript
+import { createGUI } from 'acpreact';
+
+const gui = createGUI({ agent: 'claude', version: '1.2.0' });
+gui.addAdapter('discord');
+gui.log('Bot started', 'out');
+gui.start(async (prompt) => {
+  const result = await acp.process(prompt);
+  gui.log(result.text);
+});
+```
+
+Zero dependencies — uses Node built-in `readline` + ANSI escape codes.
+
+### Service Stack / Fallback
+
+```javascript
+import { createServiceStack, FallbackEngine } from 'acpreact';
+
+const stack = createServiceStack([{ cli: 'claude' }, { cli: 'kilo' }, { cli: 'gemini' }]);
+acp.on('rate-limited', ({ name, cooldownMs }) => console.log(name, 'cooling down', cooldownMs));
+acp.on('fallback', ({ from, to }) => console.log('fallback:', from.name, '->', to.name));
+```
+
+### dadapter (Discord bot)
+
+[dadapter](https://github.com/AnEntrypoint/dadapter) is a thin entry-point that wires the Discord adapter to ACPProtocol:
+
+```bash
+DISCORD_BOT_TOKEN=xxx ACPREACT_AGENT=claude node index.js
+```
+
+## Agents
+
+| Agent | Binary | Args format |
+|---|---|---|
+| claude | `claude` | `claude --print [--model M] <prompt>` |
+| kilo | `kilo` | `kilo run --format json --auto [--model M] <prompt>` |
+| opencode | `opencode` | `opencode run --format json [--model M] <prompt>` |
+| gemini | `gemini` | `gemini run [--model M] <prompt>` |
+| aider | `aider` | `aider --message <prompt> --yes --no-auto-commits` |
+| codex | `codex` | `codex [--model M] <prompt>` |
+| goose | `goose` | `goose run --text <prompt>` |
+| amp | `amp` | `amp run [--model M] <prompt>` |
 
 ## License
 
