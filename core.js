@@ -22,10 +22,7 @@ function spawnService(entry, prompt, options, callbacks) {
     child.stdout.on('data', (d) => { const c = d.toString(); output += c; callbacks?.onOutput?.(c); });
     child.stderr.on('data', (d) => { const c = d.toString(); errorOutput += c; callbacks?.onStderr?.(c); });
     const timeoutMs = options?.timeout ?? DEFAULT_TIMEOUT_MS;
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(attachOutputs(new Error(`Timeout after ${timeoutMs}ms`), output, errorOutput));
-    }, timeoutMs);
+    const timer = setTimeout(() => { child.kill(); reject(attachOutputs(new Error(`Timeout after ${timeoutMs}ms`), output, errorOutput)); }, timeoutMs);
     const onAbort = () => { child.kill(); clearTimeout(timer); reject(attachOutputs(new Error('Aborted'), output, errorOutput)); };
     abortSignal?.addEventListener('abort', onAbort, { once: true });
     child.on('close', (code) => {
@@ -48,25 +45,17 @@ class ACPProtocol extends EventEmitter {
     this.toolSchemas = {};
     this.toolDescriptions = {};
     this.toolCallLog = [];
-    this.rejectedCallLog = [];
     this.tools = {};
     this.registry = new ServiceRegistry();
     if (services) {
-      for (const svc of services) {
-        this.registry.registerService(svc.cli || svc.name, svc);
-      }
+      for (const svc of services) this.registry.registerService(svc.cli || svc.name, svc);
     }
     this.fallback = new FallbackEngine([]);
-    this.fallback.on('rate-limited', (e) => {
-      this.registry.markRateLimited(e.name, e.profileId, e.cooldownMs);
-      this.emit('rate-limited', e);
-    });
+    this.fallback.on('rate-limited', (e) => { this.registry.markRateLimited(e.name, e.profileId, e.cooldownMs); this.emit('rate-limited', e); });
     this.fallback.on('fallback', (e) => this.emit('fallback', e));
     this.fallback.on('success', (e) => this.emit('success', e));
     this._abortController = null;
   }
-
-  generateRequestId() { return ++this.messageId; }
 
   registerTool(name, description, inputSchema, handler) {
     this.toolWhitelist.add(name);
@@ -77,11 +66,7 @@ class ACPProtocol extends EventEmitter {
   }
 
   getToolsList() {
-    return Array.from(this.toolWhitelist).map(name => ({
-      name,
-      description: this.toolDescriptions[name],
-      inputSchema: this.toolSchemas[name],
-    }));
+    return Array.from(this.toolWhitelist).map(name => ({ name, description: this.toolDescriptions[name], inputSchema: this.toolSchemas[name] }));
   }
 
   getToolsPrompt() {
@@ -98,48 +83,15 @@ class ACPProtocol extends EventEmitter {
     return prompt;
   }
 
-  createInitializeResponse() {
-    return {
-      jsonrpc: '2.0', id: 1,
-      result: {
-        tools: this.getToolsList(),
-        instruction: this.instruction,
-        agentCapabilities: { toolCalling: true, streaming: false },
-      },
-    };
-  }
-
-  createJsonRpcRequest(method, params) {
-    return { jsonrpc: '2.0', id: this.generateRequestId(), method, params };
-  }
-
-  createJsonRpcResponse(id, result) { return { jsonrpc: '2.0', id, result }; }
-
-  createJsonRpcError(id, error) { return { jsonrpc: '2.0', id, error: { code: error?.code ?? -32000, message: error instanceof Error ? error.message : String(error) } }; }
-
-  validateToolCall(toolName) {
-    if (!this.toolWhitelist.has(toolName)) {
-      const availableTools = Array.from(this.toolWhitelist);
-      this.rejectedCallLog.push({ timestamp: new Date().toISOString(), attemptedTool: toolName, reason: 'Not in whitelist', availableTools });
-      return { allowed: false, error: `Tool not available. Available: ${availableTools.join(', ')}` };
-    }
-    return { allowed: true };
-  }
-
   async callTool(toolName, params) {
-    const validation = this.validateToolCall(toolName);
-    if (!validation.allowed) throw new Error(validation.error);
+    if (!this.toolWhitelist.has(toolName)) throw new Error(`Tool not available: ${toolName}`);
     const entry = { timestamp: new Date().toISOString(), toolName, params, status: 'executing' };
     this.toolCallLog.push(entry);
     if (!this.tools[toolName]) throw new Error(`Unknown tool: ${toolName}`);
     const result = await this.tools[toolName](params);
-    entry.status = 'completed';
-    entry.result = result;
+    entry.status = 'completed'; entry.result = result;
     return result;
   }
-
-  parseTextOutput(output) { return parseTextOutput(output); }
-  parseToolCalls(output) { return parseToolCalls(output); }
 
   async process(text, options = {}) {
     const fullPrompt = this.instruction
@@ -147,15 +99,11 @@ class ACPProtocol extends EventEmitter {
       : `${this.getToolsPrompt()}\n\n---\n\n${text}`;
 
     let stack;
-    if (options.services) {
-      stack = createServiceStack(options.services);
-    } else if (options.cli) {
-      stack = [{ name: options.cli, profileId: '__default__', config: { cli: options.cli } }];
-    } else {
-      stack = this.registry.getAll().length > 0
-        ? this.registry.getAvailable()
-        : [{ name: 'kilo', profileId: '__default__', config: { cli: 'kilo' } }];
-    }
+    if (options.services) stack = createServiceStack(options.services);
+    else if (options.cli) stack = [{ name: options.cli, profileId: '__default__', config: { cli: options.cli } }];
+    else stack = this.registry.getAll().length > 0
+      ? this.registry.getAvailable()
+      : [{ name: 'claude', profileId: '__default__', config: { cli: 'claude' } }];
 
     this._abortController = new AbortController();
     const runOptions = { ...options, _abortSignal: this._abortController.signal };
