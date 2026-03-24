@@ -1,14 +1,14 @@
 # acpreact
 
-Multi-agent ACP SDK with chat platform adapters and a zero-dependency TUI.
+Multi-agent ACP SDK with chat platform adapters and a Bun web GUI.
 
 ## Features
 
 - **8 CLI agents**: claude (default), kilo, opencode, gemini, aider, codex, goose, amp
 - **4 chat adapters**: Discord, Telegram, Slack, Webhook
 - **Rate-limit fallback**: automatic failover across a service stack
-- **TUI**: zero-dep terminal dashboard via `--gui`
-- **CLI**: `acpreact --gui` to launch interactively
+- **Web GUI**: single-page app via Bun.serve + WebSocket + Tailwind (`--web`)
+- **CLI**: `acpreact --web` to launch browser dashboard
 
 ## Installation
 
@@ -21,12 +21,12 @@ npm install acpreact
 ```bash
 acpreact "What is 15 + 27?"                         # run prompt via claude (default)
 acpreact --agent kilo "refactor this"               # use a specific agent
-acpreact --gui                                       # launch TUI
-acpreact --gui --adapter discord                     # TUI + Discord adapter
-acpreact --gui --adapter telegram                    # TUI + Telegram adapter
-acpreact --gui --adapter slack --port 3000           # TUI + Slack Events API
-acpreact --gui --adapter webhook --port 3000         # TUI + generic webhook
-acpreact --list                                      # list agents and adapters
+acpreact --web                                       # launch web GUI (Bun runtime)
+acpreact --web --adapter discord                     # web GUI + Discord adapter
+acpreact --web --adapter telegram                    # web GUI + Telegram adapter
+acpreact --web --adapter slack --port 3000           # web GUI + Slack Events API
+acpreact --web --adapter webhook --port 3000         # web GUI + generic webhook
+acpreact --list                                      # list available agents and adapters
 ```
 
 Environment variables:
@@ -76,6 +76,21 @@ console.log(result.toolCalls);  // executed tool calls
 
 **Fallback events**: `rate-limited`, `fallback`, `success`
 
+### Web GUI
+
+```javascript
+import { createWebGUI } from 'acpreact';
+
+const gui = createWebGUI({ port: 3000, agent: 'claude', adapters: ['discord'] });
+const acp = new ACPProtocol('You are helpful.');
+gui.setACP(acp);
+// open http://localhost:3000
+```
+
+**Requires Bun runtime.** Serves a single-page app with Tailwind CSS, dark theme, WebSocket-driven chat log.
+
+`createWebGUI({ port, agent, adapters })` returns `{ server, url, setACP(acp), broadcast(type, text) }`
+
 ### Adapters
 
 ```javascript
@@ -93,23 +108,7 @@ Adapter types: `discord` · `telegram` · `slack` · `webhook`
 
 Each adapter: `{ start(), stop(), send(channelId, text), onMessage(fn) }`
 
-Telegram and Slack require no library — pure `fetch` long-polling / HTTP.
-
-### GUI (TUI)
-
-```javascript
-import { createGUI } from 'acpreact';
-
-const gui = createGUI({ agent: 'claude', version: '1.2.0' });
-gui.addAdapter('discord');
-gui.log('Bot started', 'out');
-gui.start(async (prompt) => {
-  const result = await acp.process(prompt);
-  gui.log(result.text);
-});
-```
-
-Zero dependencies — uses Node built-in `readline` + ANSI escape codes.
+Telegram and Slack use pure `fetch` — no extra libraries required.
 
 ### Service Stack / Fallback
 
