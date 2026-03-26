@@ -7,13 +7,13 @@ function parseTextOutput(output) {
     try {
       const json = JSON.parse(trimmed);
       if (json.type === 'text' && json.part?.text) {
+        hasJson = true;
         const partText = json.part.text;
         try {
           const inner = JSON.parse(partText.trim());
           if (inner.jsonrpc === '2.0' && inner.method?.startsWith('tools/')) continue;
         } catch {}
         text += partText;
-        hasJson = true;
       }
     } catch {}
   }
